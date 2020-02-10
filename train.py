@@ -44,6 +44,9 @@ from torchviz import make_dot
 import prunhild
 import correlation
 
+
+import time
+
 parser = argparse.ArgumentParser(description="PyTorch WideResNet Training")
 parser.add_argument("--print-freq", "-p", default=10, type=int, help="default: 10")
 parser.add_argument("--layers", default=28, type=int, help="default: 28")
@@ -374,9 +377,10 @@ def main2(args):
 
     torch.backends.cudnn.deterministic = not args.cudaNoise
 
+    torch.manual_seed(time.time())
 
     if args.init != "None":
-        args.name = "rlnet_%s" % args.init
+        args.name = "lrnet_%s" % args.init
 
     if args.tensorboard:
         configure(f"runs/{args.name}")
@@ -507,7 +511,7 @@ def main2(args):
         device = ("cuda:%d" % int(args.device[0]))
     )
     
-    ##draw(args,model)
+    draw(args,model)
     
     param_num = sum([p.data.nelement() for p in model.parameters()])
     
@@ -659,7 +663,7 @@ def main2(args):
             train(args,train_loader, model, criterion, optimizer, epoch, pruner_retrain, writer)
 
             prec1 = validate(args,val_loader, model, criterion, epoch,writer)
-            ##correlation.measure_correlation(model, epoch, writer=writer)    
+            correlation.measure_correlation(model, epoch, writer=writer)    
 
             is_best = prec1 > best_prec1
             best_prec1 = max(prec1, best_prec1)
@@ -712,8 +716,9 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
         ##input_var = torch.autograd.Variable(input)
         ##target_var = torch.autograd.Variable(target)
 
-        outputs, Qs, Ys = model(inputs)
 
+        outputs = model(inputs)
+        ##outputs, Qs, Ys = model(inputs)
         ##loss = criterion(output, target_var)
         loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
 ##        print("loss:")
@@ -734,8 +739,8 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
 
 
 
-        for y in Ys:
-            y.retain_grad()
+##        for y in Ys:
+##            y.retain_grad()
 
 
 
@@ -754,15 +759,15 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
         end = time.time()
 
 
-        kwalt = epoch*len(train_loader)+i
-        if writer is not None:
-            for j,q in enumerate(Qs):
-                writer.add_scalar("variances %d" % j, q.cpu().numpy(), kwalt)
+        if 0:
+            kwalt = epoch*len(train_loader)+i
+            if writer is not None:
+                for j,q in enumerate(Qs):
+                    writer.add_scalar("variances %d" % j, q.cpu().numpy(), kwalt)
 
-
-            for l,y in enumerate(Ys):
-                if y.grad is not None:
-                    writer.add_scalar("grad %d" % (l-j), getQ(y.grad).cpu().numpy(), kwalt)
+                for l,y in enumerate(Ys):
+                    if y.grad is not None:
+                        writer.add_scalar("grad %d" % (l-j), getQ(y.grad).cpu().numpy(), kwalt)
 
 ##            writer.add_scalars("variancess", { "%d"% j :  q.cpu().numpy() for j,q in enumerate(Qs)}, i)
 
@@ -803,7 +808,8 @@ def validate(args,val_loader, model, criterion, epoch, writer, quiet=False):
         target_var = Variable(target)
 
         with torch.no_grad():
-            output,Qs, Ys = model(input_var)
+            ##output,Qs, Ys = model(input_var)
+            output = model(input_var)
         loss = criterion(output, target_var)
 
         prec1 = accuracy(output.data, target, topk=(1,))[0]

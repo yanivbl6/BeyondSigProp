@@ -16,7 +16,6 @@ def getQ(T):
     t = T.detach()
     s = t.shape
     a = t - torch.mean(t,[1]).view(s[0],1,s[2],s[3]).expand_as(t)
-
     return torch.mean(a*a), torch.mean(t*t)
 
 
@@ -27,18 +26,14 @@ class BasicBlock(nn.Module):
     fixup_l = 12
     const = 1.0
     lrelu = 0.0
-    writer = None
     init = []
     def __init__(self, in_planes, out_planes, stride,i):
 
         super(BasicBlock, self).__init__()
-       
-
         if i % 2:
             phase = -1
         else:
             phase = 1
-
 
         self.i = i
         ##print("Use fixup:")
@@ -50,7 +45,6 @@ class BasicBlock(nn.Module):
             self.relu = nn.ReLU(inplace=True)
         else:
             self.relu = nn.LeakyReLU(self.lrelu)
-
 
         self.conv = nn.Conv2d(
             in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
@@ -71,31 +65,10 @@ class BasicBlock(nn.Module):
             * self.conv.out_channels
         )
 
-##        print("phase: %d, equal: %s " % ( phase , self.equalInOut))
 
-##        if self.equalInOut:
-
-
-        if i in self.init:
-            ConstAvg(self.conv.weight, self.conv.bias, torch.nn.init.calculate_gain('relu')*(1.0+self.lrelu), self.const, phase, self.lrelu)
-            print("Avg init: %s %d",self.relu, phase)
-
-        else:
-            ConstIdentity(self.conv.weight, self.conv.bias, torch.nn.init.calculate_gain('relu')*(1.0+self.lrelu), self.const, phase, self.lrelu)
-            print("Identity init: %s %d",self.relu, phase)
-
-
-
-##        else:
-##            ConstDeltaOrthogonal(self.conv.weight, self.conv.bias, torch.nn.init.calculate_gain('relu'),self.const)
-
-
-        self.step= 0
+        ConstAny(self.conv.weight, self.conv.bias, self.init[int(i)],  phase, self.lrelu)
 
     def forward(self, x):
-
-
-        
 
         out = self.relu(self.conv(x + self.biases[0]))
         
@@ -105,15 +78,18 @@ class BasicBlock(nn.Module):
         if self.use_bn:
             out = self.bn(out)
 
-        y = torch.autograd.Variable(out, requires_grad=True)
-        y.retain_grad()
-        y.requires_grad_()
         ##self.step = self.step + 1
         ##print("%d %d "%  (self.step, self.i))
         ##self.writer.add_scalar('Variance_%d' %  self.i , getQ(out) , self.step) 
-        return y, getQ(out) 
+        return out
 
-class NetworkBlock(nn.Module):
+        ##y = torch.autograd.Variable(out, requires_grad=True)
+        ##y.retain_grad()
+        ##y.requires_grad_()
+        ##return y, getQ(out) 
+
+
+class NetworkBlock2(nn.Module):
     def __init__(self, nb_layers, in_planes, out_planes, block, stride,pos,dev):
         super(NetworkBlock, self).__init__()
         ##self.layer = 
@@ -121,7 +97,7 @@ class NetworkBlock(nn.Module):
 
     def _make_layer(self, block, in_planes, out_planes, nb_layers, stride,pos,dev):
         layers = []
-
+        print("-------")
         for i in range(int(nb_layers)):
             _in_planes = i == 0 and in_planes or out_planes
             _stride = i == 0 and stride or 1
@@ -144,7 +120,25 @@ class NetworkBlock(nn.Module):
         return out, outs, ys
 
 
-##        return self.layer(x)
+class NetworkBlock(nn.Module):
+    def __init__(self, nb_layers, in_planes, out_planes, block, stride,pos,dev):
+        super(NetworkBlock, self).__init__()
+        self.layer =  self._make_layer(block, in_planes, out_planes, nb_layers, stride, pos, dev)
+
+    def _make_layer(self, block, in_planes, out_planes, nb_layers, stride,pos,dev):
+        layers = []
+        print("-------------")
+        for i in range(int(nb_layers)):
+            _in_planes = i == 0 and in_planes or out_planes
+            _stride = i == 0 and stride or 1
+            layers.append(block(_in_planes, out_planes, _stride,i+pos))
+
+        return nn.Sequential(*layers)
+
+        ##self.layers = layers
+
+    def forward(self, x):
+        return self.layer(x)
 
 
 class LRNet(nn.Module):
@@ -165,14 +159,8 @@ class LRNet(nn.Module):
         device = "cpu",
     ):
         super(LRNet, self).__init__()
-
-
-        
-
-
         if varnet:
             noise=1.0
-
 
         print("Using LRNet")
 
@@ -190,10 +178,8 @@ class LRNet(nn.Module):
         init = init.strip('_')
         init = init.replace("_","")
         for k in range(1,len(init)):
-            if init[k] =='1':
-                initial.append(k-1)
-
-
+            initial.append(init[k])
+        print(initial)
         BasicBlock.droprate = droprate
         BasicBlock.use_bn = use_bn
         BasicBlock.fixup_l = n * 3
@@ -201,7 +187,6 @@ class LRNet(nn.Module):
         BasicBlock.const = 1.0-noise
         BasicBlock.init = initial
         BasicBlock.lrelu = lrelu
-        BasicBlock.writer = writer
 
         ##print("Use fixup WideResnet:")
         ##print(use_fixup)
@@ -219,12 +204,9 @@ class LRNet(nn.Module):
         )
         
 ##        ConstDeltaOrthogonal(self.conv1.weight, self.conv1.bias, torch.nn.init.calculate_gain('relu'), 1.0 - noise)
-        if init[0] == "1":
-            ConstDeltaOrthogonal(self.conv1.weight, self.conv1.bias, torch.nn.init.calculate_gain('relu'), 1.0 - noise)
-        else:
-            ConstIdentity(self.conv1.weight, self.conv1.bias, 1.0 , 1.0, 1, 0.0)
-            print("first identity")
 
+
+        ConstAny(self.conv1.weight, self.conv1.bias, init[0],  1, lrelu)
         self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1,0,device)
         self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2,n,device)
         self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2,2*n,device)
@@ -233,6 +215,8 @@ class LRNet(nn.Module):
             self.relu = nn.ReLU(inplace=True)
         else:
             self.relu = nn.LeakyReLU(lrelu)
+
+
         self.fc = nn.Linear(nChannels[3], num_classes)
         self.nChannels = nChannels[3]
 
@@ -248,7 +232,22 @@ class LRNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+
     def forward(self, x):
+        out = self.conv1(x)
+        out = self.block1(out)
+        out = self.block2(out)
+        out = self.block3(out)
+        out = self.relu(out)
+        out = F.avg_pool2d(out, 8)
+        out = out.view(-1, self.nChannels)
+
+        return self.fc(out)
+
+
+
+
+    def forward2(self, x):
 
         ys = []
         
@@ -290,102 +289,28 @@ class LRNet(nn.Module):
         return self.fc(h6), h1, h2, h3, h4, h5, h6
 
 
-
-
-class ConvNet(nn.Module):
-    def __init__(
-        self,
-        depth,
-        num_classes,
-        widen_factor=1,
-        droprate=0.0,
-        use_fixup=False,
-        use_bn=True,
-        varnet=False,
-        noise=0.0,
-        lrelu=0.0,
-    ):
-        super(ConvNet, self).__init__()
-
-        if varnet:
-            noise=1.0
-
-        nChannels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
-
-        assert (depth - 4) % 3 == 0, "You need to change the number of layers"
-        n = (depth - 4) / 3
-
-        BasicBlock.droprate = droprate
-        BasicBlock.use_bn = use_bn
-        BasicBlock.fixup_l = n * 3
-        BasicBlock.use_fixup = use_fixup
-        BasicBlock.const = 1.0-noise
-        BasicBlock.lrelu = lrelu
-
-
-        ##print("Use fixup WideResnet:")
-        ##print(use_fixup)
-        ##print("Use BN WideResnet:")
-        ##print(use_bn)
-        block = BasicBlock
-
-        self.conv1 = nn.Conv2d(
-            3, nChannels[0], kernel_size=3, stride=1, padding=1, bias=False
-        )
-        k = (
-            self.conv1.kernel_size[0]
-            * self.conv1.kernel_size[1]
-            * self.conv1.out_channels
-        )
-        
-        ConstDeltaOrthogonal(self.conv1.weight, self.conv1.bias, torch.nn.init.calculate_gain('relu'), 1.0 - noise)
-
-        
-
-        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1,i)
-        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2,i)
-        self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2,i)
-
-        if lrelu ==0.0:
-            self.relu = nn.ReLU(inplace=True)
+def ConstAny(weight ,bias, init,  phase, lrelu):
+    gain =  torch.nn.init.calculate_gain('relu')*(1.0+lrelu)
+    if  init != "i" and init !="k":
+        if init == "1":
+            const1 =  1.0 
+            print("Average")
+        elif init[0] == 'h':
+            const1 =  0.0
+            print("Random")
         else:
-            self.relu = nn.LeakyReLU(lrelu)
-        self.fc = nn.Linear(nChannels[3], num_classes)
-        self.nChannels = nChannels[3]
+            const1 =  0.99
+            print("Noisy Average")
 
-        if noise > 0.0:
-            self.fc.weight.data.normal_(0, math.sqrt(noise / k))
+        ConstAvg(weight, bias, gain, const1, phase , lrelu)
+    else:
+        if init =="i":
+            const1 =  1.0 
+            print("Identity")
         else:
-            self.fc.weight.data.zero_()
-        
-        self.fc.bias.data.zero_()
-
-        for m in self.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-
-    def forward2(self, x):
-        out = self.conv1(x)
-        out = self.block1(out)
-        out = self.block2(out)
-        out = self.block3(out)
-        out = self.relu(out)
-        out = F.avg_pool2d(out, 8)
-        out = out.view(-1, self.nChannels)
-        return self.fc(out)
-
-    def forward(self,x):
-        h1 = self.conv1(x)
-        h2 = self.block1(h1)
-        h3 = self.block2(h2)
-        h4 = self.block3(h3)
-        h45 = self.relu(h4)
-        h5 = F.avg_pool2d(h45, 8)
-        h6 = h5.view(-1, self.nChannels)
-        return self.fc(h6), h1, h2, h3, h4, h5, h6
-
-
+            const1 = 0.99
+            print("Noisy Identity")
+        ConstIdentity(weight, bias, gain , const1, phase, lrelu)
 
 def genOrthgonal(dim):
     a = torch.zeros((dim, dim)).normal_(0, 1)
@@ -440,8 +365,12 @@ def ConstIdentity(weights, bias, gain, const = 1.0, phase = 1, lrelu = 0.0):
             weights.data[d0, d0 % cols, mid1, mid2] += factor 
 
 
-def ConstAvg(weights, bias, gain, const = 1.0, phase = 1, lrelu = 0.0):
 
+
+
+
+
+def ConstAvg(weights, bias, gain, const = 1.0, phase = 1, lrelu = 0.0):
     rows = weights.size(0)
     cols = weights.size(1)
 
