@@ -23,8 +23,8 @@ import torchvision.datasets as datasets
 
 from torch.autograd import Variable
 
-##from model import WideResNet
-from remodel import LRNet as WideResNet
+from model import WideResNet
+##from remodel import LRNet as WideResNet
 
 ##from model import ResNet5
 ##from remodel import ConvNet as WideResNet
@@ -506,9 +506,7 @@ def main2(args):
         noise = args.noise,
         lrelu = args.lrelu,
         sigmaW = args.sigmaW,
-        writer = writer,
         init = args.init,
-        device = ("cuda:%d" % int(args.device[0]))
     )
     
     draw(args,model)

@@ -33,25 +33,18 @@ class BasicBlock(nn.Module):
     fixup_l = 12
     varnet = False
     sigmaW = 1.0
-    writer = None
     def __init__(self, in_planes, out_planes, stride):
         super(BasicBlock, self).__init__()
         
-        ##print("Use fixup:")
-        ##print(self.use_fixup)
-        self.noise = noise.Noise(0.0,0.0)       
 
         self.bn = nn.BatchNorm2d(in_planes)
 
 
-        self.writer = writer
 
 ##        self.bn = nn.BatchNorm2d(in_planes)
 ##        self.relu = nn.Softplus()
 ##        self.relu = Swish()
         self.relu = nn.ReLU(inplace=True)
-
-
 ##        self.relu = nn.Hardtanh()
         print(self.relu)
 
@@ -66,76 +59,63 @@ class BasicBlock(nn.Module):
             in_planes, out_planes, kernel_size=1, stride=stride, padding=0, bias=False
         )
         self.conv_res = not self.equalInOut and self.conv_res or None
-        self.no_act =  not self.equalInOut
+        ##self.no_act =  not self.equalInOut
            
-        ##self.no_act =  True ## Linear networks! remove me 
         ##print("Using linear networks!")
 
         assert (
             self.use_fixup or self.use_bn
         ), "Need to use at least one thing: Fixup or BatchNorm"
 
-        if self.use_fixup:
+        self.scale = nn.Parameter(torch.ones(1))
+        self.biases = nn.ParameterList(
+            [nn.Parameter(torch.zeros(1)) for _ in range(2)]
+        )
 
-            self.scale = nn.Parameter(torch.ones(1))
-            self.biases = nn.ParameterList(
-                [nn.Parameter(torch.zeros(1)) for _ in range(2)]
+        k = (
+            self.conv.kernel_size[0]
+            * self.conv.kernel_size[1]
+            * self.conv.out_channels
+        )
+
+        if self.varnet:
+            self.conv.weight.data.normal_(
+                0, gain * math.sqrt(self.sigmaW / k)
             )
-
-            k = (
-                self.conv.kernel_size[0]
-                * self.conv.kernel_size[1]
-                * self.conv.out_channels
-            )
-
-            if self.varnet:
+        else:
+            if self.sigmaW == 0.0:
+                self.conv.weight.data.zero_()
+            else:
                 self.conv.weight.data.normal_(
                     0, gain * math.sqrt(self.sigmaW / k)
                 )
-            else:
-                if self.sigmaW == 0.0:
-                    self.conv.weight.data.zero_()
-                else:
-                    self.conv.weight.data.normal_(
-                        0, gain * math.sqrt(self.sigmaW / k)
-                    )
 
-            if self.conv_res is not None:
-                gain = 1.0 ##doesn't currently pass through relu.
-                k = (
-                    self.conv_res.kernel_size[0]
-                    * self.conv_res.kernel_size[1]
-                    * self.conv_res.out_channels
-                )
-                if self.varnet:
-                    self.conv_res.weight.data.normal_(0, gain * math.sqrt(self.sigmaW / k))
-                else:
-                    self.conv_res.weight.data.fill_(gain**2 / self.conv_res.in_channels)
+        if self.conv_res is not None:
+            gain = 1.0 ##doesn't currently pass through relu.
+            k = (
+                self.conv_res.kernel_size[0]
+                * self.conv_res.kernel_size[1]
+                * self.conv_res.out_channels
+            )
+            if self.varnet:
+                self.conv_res.weight.data.normal_(0, gain * math.sqrt(self.sigmaW / k))
+            else:
+                ConstAvg(self.conv_res.weight, self.conv_res.bias)
+                ##self.conv_res.weight.data.fill_(gain**2 / self.conv_res.in_channels)
 
     def forward(self, x):
         if self.use_bn:
-            if self.no_act:
-                x_out = self.bn(x)
-##                x_out = x
-                ##out = self.relu(x_out)
-            else:
-                x_out = self.bn(x)
+            x_out = self.bn(x)
             ##x_out = x
             ##out = x_out
             ##out = self.relu(self.conv(x_out + self.biases[0]))
 
-            ##out = self.conv(self.relu(x_out))
-            out = self.conv(x_out)
-            ##out = self.relu(self.conv(x_out))
-            ##out = self.relu(self.bn(self.conv(x_out)))
-            ##out = self.noise(out)
+            out = self.conv(self.relu(x_out))
+            ##out = self.conv(x_out)
             if self.droprate > 0:
                 out = F.dropout(out, p=self.droprate, training=self.training)
         else:
-            if self.no_act:
-                x_out = x + self.biases[0]
-            else:
-                x_out = x + self.biases[0]
+            x_out = x + self.biases[0]
             out = self.conv(self.relu(x_out)) + self.biases[1]
             ##out = self.noise(out)
 
@@ -148,12 +128,15 @@ class BasicBlock(nn.Module):
 
             out = self.scale * out
 
-  
+
+
 
         if self.equalInOut:
-            return torch.add(x, out)
+            out =  torch.add(x, out)
+        else:
+            out = torch.add(self.conv_res(x_out), out)
 
-        return torch.add(self.conv_res(x_out), out)
+        return out
 
 
 class NetworkBlock(nn.Module):
@@ -172,7 +155,10 @@ class NetworkBlock(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        return self.layer(x), 
+ 
+        out = self.layer(x)
+
+        return self.layer(x) 
 
 
 class WideResNet(nn.Module):
@@ -188,7 +174,7 @@ class WideResNet(nn.Module):
         noise=0.0,
         lrelu=0.0,
         sigmaW = 1.0,
-        writer = writer,
+        init = None,
     ):
         super(WideResNet, self).__init__()
 
@@ -203,7 +189,6 @@ class WideResNet(nn.Module):
         BasicBlock.use_fixup = use_fixup
         BasicBlock.varnet = varnet
         BasicBlock.sigmaW = sigmaW
-        BasicBlock.writer = writer
 
 
 
@@ -226,7 +211,10 @@ class WideResNet(nn.Module):
         if varnet:
             self.conv1.weight.data.normal_(0, 1.0 * math.sqrt(sigmaW / k))
         else:
-            makeLambdaDeltaOrthogonal(self.conv1.weight, self.conv1.bias, 1/3)
+            ##makeLambdaDeltaOrthogonal(self.conv1.weight, self.conv1.bias, 1/3)
+            ConstAvg(self.conv1.weight, self.conv1.bias)
+    
+
         self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1)
         self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2)
         self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2)
@@ -266,6 +254,8 @@ def genOrthgonal(dim):
     q.mul_(d_exp)
     return q
 
+
+
 def makeLambdaDeltaOrthogonal(weights, bias, gain):
     rows = weights.size(0)
     cols = weights.size(1)
@@ -276,6 +266,30 @@ def makeLambdaDeltaOrthogonal(weights, bias, gain):
     mid2 = weights.size(3) // 2
     nn.init.constant_(weights, 0)
     weights.data[:, :, mid1, mid2] = gain ##torch.ones([rows, cols]) * gain
+
+
+
+def ConstAvg(weights, bias, gain=1.0, const = 1.0):
+    rows = weights.size(0)
+    cols = weights.size(1)
+
+    if const < 1.0:
+        k = cols * weights.size(2) * weights.size(3)
+        weights.data.normal_(0, math.sqrt(gain*(1.0-const) / k))
+    else: 
+        nn.init.constant_(weights, 0)
+
+    if bias is not None:
+        nn.init.constant_(bias, 0)
+
+    if const > 0.0:
+
+        mid1 = weights.size(2) // 2
+        mid2 = weights.size(3) // 2
+        factor = const/cols
+
+        weights.data[:, :, mid1, mid2] += factor
+
 
 
 
