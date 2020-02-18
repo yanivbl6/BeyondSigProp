@@ -39,8 +39,6 @@ class BasicBlock(nn.Module):
 
         self.bn = nn.BatchNorm2d(in_planes)
 
-
-
 ##        self.bn = nn.BatchNorm2d(in_planes)
 ##        self.relu = nn.Softplus()
 ##        self.relu = Swish()
@@ -103,9 +101,11 @@ class BasicBlock(nn.Module):
                 ConstAvg(self.conv_res.weight, self.conv_res.bias)
                 ##self.conv_res.weight.data.fill_(gain**2 / self.conv_res.in_channels)
 
+
     def forward(self, x):
         if self.use_bn:
             x_out = self.bn(x)
+
             ##x_out = x
             ##out = x_out
             ##out = self.relu(self.conv(x_out + self.biases[0]))

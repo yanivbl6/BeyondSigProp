@@ -68,6 +68,8 @@ class BasicBlock(nn.Module):
 
         ConstAny(self.conv.weight, self.conv.bias, self.init[int(i)],  phase, self.lrelu)
 
+        self.phase = phase
+
     def forward(self, x):
 
         out = self.relu(self.conv(x + self.biases[0]))
@@ -76,7 +78,8 @@ class BasicBlock(nn.Module):
             out = F.dropout(out, p=self.droprate, training=self.training)
 
         if self.use_bn:
-            out = self.bn(out)
+            if self.phase < 0:
+                out = self.bn(out)
 
         ##self.step = self.step + 1
         ##print("%d %d "%  (self.step, self.i))

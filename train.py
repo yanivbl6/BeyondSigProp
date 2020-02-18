@@ -24,7 +24,8 @@ import torchvision.datasets as datasets
 from torch.autograd import Variable
 
 from model import WideResNet
-##from remodel import LRNet as WideResNet
+
+from remodel import LRNet
 
 ##from model import ResNet5
 ##from remodel import ConvNet as WideResNet
@@ -97,6 +98,10 @@ parser.add_argument(
 )
 parser.add_argument(
     "--name", default="WideResNet-28-10", type=str, help="name of experiment"
+)
+
+parser.add_argument(
+    "-a","--arch", default="constnet", type=str, help="name of arch (constnet/leakynet)"
 )
 
 parser.add_argument(
@@ -181,6 +186,9 @@ parser.add_argument(
 parser.add_argument(
     "--cudaNoise", default=True, action='store_false' , help="Turn cudann to deterministic"
 )
+
+
+
 
 parser.set_defaults(augment=True)
 
@@ -495,20 +503,39 @@ def main2(args):
             return None
 
 
-    model = WideResNet(
-        args.layers,
-        args.classes,
-        args.widen_factor,
-        droprate=args.droprate,
-        use_bn=args.batchnorm,
-        use_fixup=args.fixup,
-        varnet = args.varnet,
-        noise = args.noise,
-        lrelu = args.lrelu,
-        sigmaW = args.sigmaW,
-        init = args.init,
-    )
-    
+    if args.arch.lower() == "constnet":
+        model = WideResNet(
+            args.layers,
+            args.classes,
+            args.widen_factor,
+            droprate=args.droprate,
+            use_bn=args.batchnorm,
+            use_fixup=args.fixup,
+            varnet = args.varnet,
+            noise = args.noise,
+            lrelu = args.lrelu,
+            sigmaW = args.sigmaW,
+            init = args.init,
+        )
+    elif args.arch.lower() == "leakynet":
+        model = LRNet(
+            args.layers,
+            args.classes,
+            args.widen_factor,
+            droprate=args.droprate,
+            use_bn=args.batchnorm,
+            use_fixup=args.fixup,
+            varnet = args.varnet,
+            noise = args.noise,
+            lrelu = args.lrelu,
+            sigmaW = args.sigmaW,
+            init = args.init,
+        )
+    else: 
+        print("arch %s is not supported" % args.arch)
+        return None
+
+ 
     draw(args,model)
     
     param_num = sum([p.data.nelement() for p in model.parameters()])
