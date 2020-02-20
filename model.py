@@ -89,7 +89,7 @@ class BasicBlock(nn.Module):
                 )
 
         if self.conv_res is not None:
-            gain = 1.0 ##doesn't currently pass through relu.
+            ##gain = 1.0 ##doesn't currently pass through relu.
             k = (
                 self.conv_res.kernel_size[0]
                 * self.conv_res.kernel_size[1]
@@ -98,35 +98,55 @@ class BasicBlock(nn.Module):
             if self.varnet:
                 self.conv_res.weight.data.normal_(0, gain * math.sqrt(self.sigmaW / k))
             else:
-                ConstAvg(self.conv_res.weight, self.conv_res.bias)
+                ConstAvg(self.conv_res.weight, self.conv_res.bias, gain)
                 ##self.conv_res.weight.data.fill_(gain**2 / self.conv_res.in_channels)
-
 
     def forward(self, x):
         if self.use_bn:
-            x_out = self.bn(x)
-
-            ##x_out = x
-            ##out = x_out
-            ##out = self.relu(self.conv(x_out + self.biases[0]))
-
-            out = self.conv(self.relu(x_out))
-            ##out = self.conv(x_out)
+            x_out = self.relu(self.bn(x))
+            out = self.conv(x_out)
             if self.droprate > 0:
                 out = F.dropout(out, p=self.droprate, training=self.training)
         else:
-            x_out = x + self.biases[0]
-            out = self.conv(self.relu(x_out)) + self.biases[1]
-            ##out = self.noise(out)
-
-
-##            x_out = self.relu(x + self.biases[0])
-##            out = self.conv(x_out) + self.biases[1]
-
+            x_out = self.relu(x + self.biases[0])
+            out = self.conv(x_out) + self.biases[1]
             if self.droprate > 0:
                 out = F.dropout(out, p=self.droprate, training=self.training)
-
             out = self.scale * out
+
+        if self.equalInOut:
+            return torch.add(x, out)
+
+        return torch.add(self.conv_res(x_out), out)
+
+
+
+
+        if 0:
+            if self.use_bn:
+                x_out = self.bn(x)
+
+                ##x_out = x
+                ##out = x_out
+                ##out = self.relu(self.conv(x_out + self.biases[0]))
+
+                out = self.conv(self.relu(x_out))
+                ##out = self.conv(x_out)
+                if self.droprate > 0:
+                    out = F.dropout(out, p=self.droprate, training=self.training)
+            else:
+                x_out = x + self.biases[0]
+                out = self.conv(self.relu(x_out)) + self.biases[1]
+                ##out = self.noise(out)
+
+
+    ##            x_out = self.relu(x + self.biases[0])
+    ##            out = self.conv(x_out) + self.biases[1]
+
+                if self.droprate > 0:
+                    out = F.dropout(out, p=self.droprate, training=self.training)
+
+                out = self.scale * out
 
 
 
@@ -212,7 +232,7 @@ class WideResNet(nn.Module):
             self.conv1.weight.data.normal_(0, 1.0 * math.sqrt(sigmaW / k))
         else:
             ##makeLambdaDeltaOrthogonal(self.conv1.weight, self.conv1.bias, 1/3)
-            ConstAvg(self.conv1.weight, self.conv1.bias)
+            ConstAvg(self.conv1.weight, self.conv1.bias,gain)
     
 
         self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1)
