@@ -246,7 +246,7 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
 def draw(args,model):
     misc = torch.zeros([args.batch_size,3,32,32])
     dot = make_dot(model(misc), params= dict(model.named_parameters()))
-    dot.format = 'pdf'
+    dot.format = 'jpg'
     
 
     if args.batchnorm:

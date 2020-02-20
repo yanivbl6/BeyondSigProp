@@ -98,7 +98,10 @@ class BasicBlock(nn.Module):
             if self.varnet:
                 self.conv_res.weight.data.normal_(0, gain * math.sqrt(self.sigmaW / k))
             else:
+                ##ConstAvg(self.conv_res.weight, self.conv_res.bias, gain)
                 ConstAvg(self.conv_res.weight, self.conv_res.bias, gain)
+
+
                 ##self.conv_res.weight.data.fill_(gain**2 / self.conv_res.in_channels)
 
     def forward(self, x):
@@ -306,11 +309,9 @@ def ConstAvg(weights, bias, gain=1.0, const = 1.0):
 
         mid1 = weights.size(2) // 2
         mid2 = weights.size(3) // 2
-        factor = const/cols
+        factor = gain*const/cols
 
         weights.data[:, :, mid1, mid2] += factor
-
-
 
 
 def ConstIdentity(weights, bias, gain, const = 1.0):

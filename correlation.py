@@ -77,7 +77,7 @@ def measure_correlation(model, epoch, N = 5000, writer = None):
         
         if len(m.weight.data.shape)>=2:
 
-            corrs =  pair_correllation(mm.cpu(),fanin=True,fanout=True, maxN = N)
+##            corrs =  pair_correllation(mm.cpu(),fanin=True,fanout=True, maxN = N)
             forward = pair_correllation(mm.cpu(),fanin=False,fanout=True, maxN = N)
             backward = pair_correllation(mm.cpu(),fanin=True,fanout=False, maxN = N)
 
@@ -86,7 +86,7 @@ def measure_correlation(model, epoch, N = 5000, writer = None):
             name=  name[0:31] + ')'
          
             if writer is not None:
-                writer.add_scalar('%s/correlations' % name, logc(corrs), epoch)
+##                writer.add_scalar('%s/correlations' % name, logc(corrs), epoch)
                 writer.add_scalar('%s/forward' % name, logc(forward), epoch)
                 writer.add_scalar('%s/backward' % name, logc(backward), epoch)
       
