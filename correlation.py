@@ -67,8 +67,9 @@ def measure_correlation(model, epoch, N = 5000, writer = None):
     list = make_list(model)
  
     res = {} 
-
+    cnt = 0.0
     diversity = 0.0
+    maxC = 0.0
     for k,m in enumerate(list):
         if m is None:
             continue
@@ -77,31 +78,37 @@ def measure_correlation(model, epoch, N = 5000, writer = None):
         
         if len(m.weight.data.shape)>=2:
 
-            corrs =  pair_correllation(mm.cpu(),fanin=True,fanout=True, maxN = N)
-            forward = pair_correllation(mm.cpu(),fanin=False,fanout=True, maxN = N)
-            backward = pair_correllation(mm.cpu(),fanin=True,fanout=False, maxN = N)
+##            corrs =  pair_correllation(mm.cpu(),fanin=True,fanout=True, maxN = N)
+            backward = pair_correllation(mm.cpu(),fanin=False,fanout=True, maxN = N)
+            forward = pair_correllation(mm.cpu(),fanin=True,fanout=False, maxN = N)
 
             name = "%d) %s" % (k,m)
             name = name.replace(" ",'')
             name=  name[0:31] + ')'
          
             if writer is not None:
-                writer.add_scalar('%s/correlations' % name, logc(corrs), epoch)
+##                writer.add_scalar('%s/correlations' % name, logc(corrs), epoch)
                 writer.add_scalar('%s/forward' % name, logc(forward), epoch)
                 writer.add_scalar('%s/backward' % name, logc(backward), epoch)
       
 
 
             ##print(np.log( sinc(backward))) 
-            diversity = diversity + np.log(sinc(backward))
+            diversity = diversity + sinc(forward)
+            if forward > maxC:
+                maxC = forward
+            cnt  = cnt+1
             
 
-            res["%s" % m] =  (corrs, forward, backward)
+            res["%s" % m] =  (0.0 , forward, backward)
     ##print(diversity)
+    if cnt>0:
+        writer.add_scalar('Mean disimilarity' , diversity/cnt, epoch)
+        writer.add_scalar('Max similarity' , maxC, epoch)
 
-    writer.add_scalar('Diversity' , diversity, epoch)
 
     return res
+
 
 def cross_correllation(m1, m2 , forward = True):
     A = m1.numpy()
