@@ -188,6 +188,13 @@ parser.add_argument(
 )
 
 
+parser.add_argument(
+    "--fp16", default=False, action='store_true' , help="Use half precision"
+)
+
+
+
+
 
 
 parser.set_defaults(augment=True)
@@ -246,7 +253,7 @@ def mixup_criterion(criterion, pred, y_a, y_b, lam):
 def draw(args,model):
     misc = torch.zeros([args.batch_size,3,32,32])
     dot = make_dot(model(misc), params= dict(model.named_parameters()))
-    dot.format = 'pdf'
+    dot.format = 'jpg'
     
 
     if args.batchnorm:
@@ -551,7 +558,8 @@ def main2(args):
         for i in range(start,end):
             dev_list.append("cuda:%d" % i)
         model = torch.nn.DataParallel(model, device_ids=dev_list)
-
+    if args.fp16:
+        model =model.half()
     model = model.cuda()
 
     if args.freeze>0:
@@ -741,7 +749,8 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
         ##input_var = torch.autograd.Variable(input)
         ##target_var = torch.autograd.Variable(target)
 
-
+        if args.fp16:
+            inputs = inputs.half()
         outputs = model(inputs)
         ##outputs, Qs, Ys = model(inputs)
         ##loss = criterion(output, target_var)
@@ -831,10 +840,12 @@ def validate(args,val_loader, model, criterion, epoch, writer, quiet=False):
         input = input.cuda()
         input_var = Variable(input)
         target_var = Variable(target)
-
+        if args.fp16:
+            input_var = input_var.half()
         with torch.no_grad():
             ##output,Qs, Ys = model(input_var)
             output = model(input_var)
+
         loss = criterion(output, target_var)
 
         prec1 = accuracy(output.data, target, topk=(1,))[0]
