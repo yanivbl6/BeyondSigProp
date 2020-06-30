@@ -24,8 +24,12 @@ import torchvision.datasets as datasets
 from torch.autograd import Variable
 
 from model import WideResNet
-from model import ResNet5
 
+from remodel import LRNet
+
+##from model import ResNet5
+##from remodel import ConvNet as WideResNet
+##from remodel import NarrowNet as WideResNet
 
 from utils.cutout import Cutout
 from utils.radam import RAdam, AdamW
@@ -39,22 +43,24 @@ import numpy as np
 from torchviz import make_dot
 
 import prunhild
+import correlation
 
+
+import time
 
 parser = argparse.ArgumentParser(description="PyTorch WideResNet Training")
 parser.add_argument("--print-freq", "-p", default=10, type=int, help="default: 10")
 parser.add_argument("--layers", default=28, type=int, help="default: 28")
 parser.add_argument("--widen-factor", default=10, type=int, help="default: 10")
 parser.add_argument("--batchnorm", default=False, help="apply BatchNorm",  action='store_true')
-parser.add_argument("--fixup", default=False, help="apply Fixup", action='store_true'  )
-parser.add_argument("--droprate", default=0, type=float, help="default: 0.0")
+parser.add_argument("--fixup", default=True, help="apply Fixup", action='store_false'  )
+parser.add_argument("--droprate", default=0.0, type=float, help="default: 0.0")
 parser.add_argument("--cutout", default=False, type=bool, help="apply cutout")
 parser.add_argument("--length", default=16, type=int, help="length of the holes")
 parser.add_argument("--n_holes", default=1, type=int, help="number of holes to cut out")
 parser.add_argument(
     "--dataset", default="cifar10", type=str, help="cifar10 [default], cifar100, cinic10, imgnet10 or imgnet100"
 )
-
 
 parser.add_argument("--epochs", default=200, type=int, help="default: 200")
 parser.add_argument("--start-epoch", default=0, type=int, help="epoch for restart")
@@ -68,15 +74,23 @@ parser.add_argument('--beta2', default=0.999, type=float,
                     help='beta2 for adam')
 
 parser.add_argument(
-    "--lr", "--learning-rate", default=0.1, type=float, help="default: 0.1"
+    "--lr", "--learning-rate", default=0.03, type=float, help="default: 0.03"
 )
 parser.add_argument("--momentum", default=0.9, type=float, help="momentum")
-parser.add_argument("--nesterov", default=True, type=bool, help="nesterov momentum")
+parser.add_argument("--nesterov", default = False, action = "store_true" , help="nesterov momentum")
 parser.add_argument(
     "--weight-decay", "--wd", default=5e-4, type=float, help="default: 5e-4"
 )
 parser.add_argument('--alpha', default=0.0, type=float,
                     help='mixup interpolation coefficient (default: 0.0)')
+
+
+parser.add_argument('--forceW', default=0.0, type=float,
+                    help='mixup interpolation coefficient (default: 0.0)')
+
+
+
+
 
 parser.add_argument(
     "--resume", default="", type=str, help="path to latest checkpoint (default: '')"
@@ -87,6 +101,19 @@ parser.add_argument(
 parser.add_argument(
     "--name", default="WideResNet-28-10", type=str, help="name of experiment"
 )
+
+parser.add_argument(
+    "-a","--arch", default="constnet", type=str, help="name of arch (constnet/leakynet)"
+)
+
+parser.add_argument(
+    "--init", default="None", type=str, help="rlnet init"
+)
+
+parser.add_argument(
+    "--dir", default="/home/NAME/Datasets", type=str, help="dataset directory"
+)
+
 parser.add_argument(
     "--tensorboard", help="Log progress to TensorBoard", action="store_true"
 )
@@ -129,10 +156,55 @@ parser.add_argument("--varnet", default=False, action='store_true' , help="Use d
 
 parser.add_argument("--symmetry_break", default=False, action='store_true' , help="Quit if the accuracy is over 50% for some time")
 
+parser.add_argument(
+    "--noise", default=0.0, type=float, help="noise. 0.0: constnet, 1.0: varnet"
+)
+
+parser.add_argument(
+    "--lrelu", default=0.0, type=float, help="leaky relu variable"
+)
+
+
+parser.add_argument(
+    "-W", "--sigmaW", default=-1.0, type=float, help="Varnet parameter for initializing weights"
+)
+
+parser.add_argument(
+    "--freeze", default=0, type=int, help="Number of top layers to freeze"
+)
+
+parser.add_argument(
+    "--freeze_start", default=0, type=int, help="Number of top layers not to freeze"
+)
+
+parser.add_argument(
+    "--res_freeze", default=0, type=int, help="Number of conv layers to freeze"
+)
+
+parser.add_argument(
+    "--res_freeze_start", default=0, type=int, help="Number of conv layers not to freeze"
+)
+
+parser.add_argument(
+    "--cudaNoise", default=True, action='store_false' , help="Turn cudann to deterministic"
+)
+
+parser.add_argument(
+    "--dropl1", default=False, action='store_true' , help="Apply dropout to first layer (conv)"
+)
 
 
 
 parser.set_defaults(augment=True)
+
+
+def getQ(T):
+    t = T.detach()
+    s = t.shape
+    a = t - torch.mean(t,[1]).view(s[0],1,s[2],s[3]).expand_as(t)
+    return torch.mean(a*a)
+
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -180,6 +252,8 @@ def draw(args,model):
     misc = torch.zeros([args.batch_size,3,32,32])
     dot = make_dot(model(misc), params= dict(model.named_parameters()))
     dot.format = 'pdf'
+    
+
     if args.batchnorm:
         dot.render("batchnorm-graph") 
     elif args.fixup:
@@ -192,6 +266,13 @@ def justParse(txt=None):
         args = parser.parse_args()
     else:
         args = parser.parse_args(txt.split())
+
+    if args.sigmaW == -1.0:
+        if args.varnet:
+            args.sigmaW = 1.0
+        else:
+            args.sigmaW = 0.0
+
     return args
 
 def intersection(lst1, lst2): 
@@ -214,7 +295,7 @@ def randomize_mask(mask,cutoff):
     for k in st.keys():
         m = st[k]['prune_mask']
         mshape = (m.shape)
-        m.data = torch.bernoulli(0.30 * torch.ones(mshape))
+        m.data = torch.bernoulli(cutoff * torch.ones(mshape))
     return mask
 
 def getPruneMask(args):
@@ -234,6 +315,9 @@ def getPruneMask(args):
             use_bn=args.batchnorm,
             use_fixup=args.fixup,
             varnet = args.varnet,
+            noise = args.noise,
+            lrelu = args.lrelu,
+            sigmaW = args.sigmaW,
         )
 
 
@@ -262,6 +346,9 @@ def getPruneMask(args):
         cutoff = prunhild.cutoff.LocalRatioCutoff(args.cutoff)
         # don't prune the final bias weights
         params = get_params_for_pruning(args,fullModel)
+
+        print(params)
+
         pruner = prunhild.pruner.CutoffPruner(params, cutoff, prune_online=True)
         pruner.prune()
        
@@ -284,11 +371,21 @@ def getPruneMask(args):
         return None
         
 def main(txt=None):
-    if not txt:
-        args = parser.parse_args()
-    else:
-        args = parser.parse_args(txt.split())
-    return main2(args)
+    args = justParse(txt)
+
+
+    cnt = 0
+    res = main2(args)
+    while res == "restart":
+        cnt = cnt + 1
+        res = main2(args)
+        if cnt == 5:
+            print("Experiment repeatedly failed")
+            break
+
+    if cnt > 0:
+        print("Retries: %d" % cnt)
+    return res
 
 def nondigits(txt):
     return ''.join([i for i in txt if not i.isdigit()])
@@ -302,6 +399,13 @@ def onlydigits(txt):
 
 def main2(args):
     best_prec1 = 0.0
+
+    torch.backends.cudnn.deterministic = not args.cudaNoise
+
+    torch.manual_seed(time.time())
+
+    if args.init != "None":
+        args.name = "lrnet_%s" % args.init
 
     if args.tensorboard:
         configure(f"runs/{args.name}")
@@ -373,7 +477,7 @@ def main2(args):
             **kwargs,
         )
     elif  dstype == "cinic":
-        cinic_directory = '/home/ehoffer/Datasets/cinic10'
+        cinic_directory = "%s/cinic10" % args.dir
         cinic_mean = [0.47889522, 0.47227842, 0.43047404]
         cinic_std = [0.24205776, 0.23828046, 0.25874835]
         train_loader = torch.utils.data.DataLoader(
@@ -390,13 +494,13 @@ def main2(args):
     elif dstype == "imgnet":
         print("Using converted imagenet")
         train_loader = torch.utils.data.DataLoader(
-            IMGNET("/home/ehoffer/Datasets/", train=True, transform=transform_train, target_transform=None, classes = args.classes),
+            IMGNET("%s" % args.dir, train=True, transform=transform_train, target_transform=None, classes = args.classes),
             batch_size=args.batch_size,
             shuffle=True,
             **kwargs,
         )
         val_loader = torch.utils.data.DataLoader(
-            IMGNET("/home/ehoffer/Datasets/", train=False, transform=transform_test, target_transform=None, classes = args.classes),
+            IMGNET("%s" % args.dir, train=False, transform=transform_test, target_transform=None, classes = args.classes),
             batch_size=args.batch_size,
             shuffle=True,
             **kwargs,
@@ -409,24 +513,48 @@ def main2(args):
     ##print("main fixup:")
     ##print(args.fixup)
 
-    if args.prune :
+    if args.prune:
         pruner_state = getPruneMask(args)
         if pruner_state is None:
             print("Failed to prune network, aborting")
             return None
 
 
-    model = WideResNet(
-        args.layers,
-        args.classes,
-        args.widen_factor,
-        droprate=args.droprate,
-        use_bn=args.batchnorm,
-        use_fixup=args.fixup,
-        varnet = args.varnet,
-    )
-    
-    draw(args,model)
+    if args.arch.lower() == "constnet":
+        model = WideResNet(
+            args.layers,
+            args.classes,
+            args.widen_factor,
+            droprate=args.droprate,
+            use_bn=args.batchnorm,
+            use_fixup=args.fixup,
+            varnet = args.varnet,
+            noise = args.noise,
+            lrelu = args.lrelu,
+            sigmaW = args.sigmaW,
+            init = args.init,
+            dropl1 = args.dropl1,
+        )
+    elif args.arch.lower() == "leakynet":
+        model = LRNet(
+            args.layers,
+            args.classes,
+            args.widen_factor,
+            droprate=args.droprate,
+            use_bn=args.batchnorm,
+            use_fixup=args.fixup,
+            varnet = args.varnet,
+            noise = args.noise,
+            lrelu = args.lrelu,
+            sigmaW = args.sigmaW,
+            init = args.init,
+        )
+    else: 
+        print("arch %s is not supported" % args.arch)
+        return None
+
+ 
+    ##draw(args,model)  complex installation
     
     param_num = sum([p.data.nelement() for p in model.parameters()])
     
@@ -444,6 +572,55 @@ def main2(args):
 
     model = model.cuda()
 
+    if args.freeze>0:
+        cnt = 0
+        for name,param in model.named_parameters():
+            if intersection(['scale'],name.split('.')):
+                cnt=cnt+1
+                if cnt == args.freeze:
+                    break
+
+            if cnt >= args.freeze_start:
+##                if intersection(['conv','conv1'],name.split('.')):
+##                    print("Freezing Block: %s" % name.split('.')[1:3]  )
+                if not intersection(['conv_res','fc'],name.split('.')):
+                    param.requires_grad = False
+                    print("Freezing Block: %s" % name)
+
+
+    elif args.freeze < 0:
+        cnt = 0
+        for name,param in model.named_parameters():
+            if intersection(['scale'],name.split('.')):
+                cnt=cnt+1
+
+            if cnt >  args.layers - 3 + args.freeze - 1:
+##                if intersection(['conv','conv1'],name.split('.')):
+##                    print("Freezing Block: %s" % name  )
+
+                if not intersection(['conv_res','fc'],name.split('.')):
+                    param.requires_grad = False
+                    print("Freezing Block: %s" % name  )
+
+
+    if args.res_freeze > 0:
+        cnt = 0
+        for name,param in model.named_parameters():
+            if intersection(['conv_res'],name.split('.')):
+                cnt=cnt+1
+                if cnt > args.res_freeze_start:
+                    param.requires_grad = False
+                    print("Freezing Block: %s" % name)
+                if cnt >= args.res_freeze:
+                    break
+    elif args.res_freeze < 0:
+        cnt = 0
+        for name,param in model.named_parameters():
+            if intersection(['conv_res'],name.split('.')):
+                cnt=cnt+1
+                if cnt > 3 + args.res_freeze:
+                    param.requires_grad = False
+                    print("Freezing Block: %s" % name)
 
 
     if args.prune: 
@@ -529,8 +706,7 @@ def main2(args):
             train(args,train_loader, model, criterion, optimizer, epoch, pruner_retrain, writer)
 
             prec1 = validate(args,val_loader, model, criterion, epoch,writer)
-
-
+            correlation.measure_correlation(model, epoch, writer=writer)    
 
             is_best = prec1 > best_prec1
             best_prec1 = max(prec1, best_prec1)
@@ -544,7 +720,6 @@ def main2(args):
                     },
                     is_best,
                 )
-
             if args.symmetry_break:
                 if prec1 > 50.0:
                     turns_above_50+=1
@@ -571,6 +746,7 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
     reg_loss = 0.0
     train_loss = 0.0
     end = time.time()
+
     for i, (inputs, target) in enumerate(train_loader):
 
         target = target.cuda()
@@ -582,7 +758,9 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
         ##input_var = torch.autograd.Variable(input)
         ##target_var = torch.autograd.Variable(target)
 
+
         outputs = model(inputs)
+        ##outputs, Qs, Ys = model(inputs)
         ##loss = criterion(output, target_var)
         loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
 ##        print("loss:")
@@ -600,14 +778,42 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
 ##        top1.update(prec1.item(), input.size(0))
 
         optimizer.zero_grad()
+
+
+
+##        for y in Ys:
+##            y.retain_grad()
+
+
+
         loss.backward()
+
+
         optimizer.step()
+
+
+
 
         if pruner is not None:
             pruner.prune(update_state=False)
 
         batch_time.update(time.time() - end)
         end = time.time()
+
+
+        if 0:
+            kwalt = epoch*len(train_loader)+i
+            if writer is not None:
+                for j,q in enumerate(Qs):
+                    writer.add_scalar("variances %d" % j, q.cpu().numpy(), kwalt)
+
+                for l,y in enumerate(Ys):
+                    if y.grad is not None:
+                        writer.add_scalar("grad %d" % (l-j), getQ(y.grad).cpu().numpy(), kwalt)
+
+##            writer.add_scalars("variancess", { "%d"% j :  q.cpu().numpy() for j,q in enumerate(Qs)}, i)
+
+
 
         if 0:
             if i % args.print_freq == 0:
@@ -628,7 +834,7 @@ def train(args,train_loader, model, criterion, optimizer, epoch, pruner, writer)
 
 
 
-def validate(args,val_loader, model, criterion, epoch, writer):
+def validate(args,val_loader, model, criterion, epoch, writer, quiet=False):
     """Perform validation on the validation set"""
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -644,6 +850,7 @@ def validate(args,val_loader, model, criterion, epoch, writer):
         target_var = Variable(target)
 
         with torch.no_grad():
+            ##output,Qs, Ys = model(input_var)
             output = model(input_var)
         loss = criterion(output, target_var)
 
@@ -674,8 +881,8 @@ def validate(args,val_loader, model, criterion, epoch, writer):
             log_value("val_acc", top1.avg, epoch)
 
 
-
-    print(f" * Prec@1 {top1.avg:.3f}")
+    if not quiet:
+        print(f" * Prec@1 {top1.avg:.3f}")
 
     return top1.avg
 
@@ -702,11 +909,16 @@ def save_checkpoint(args,state, is_best, filename="checkpoint.pth.tar"):
 
 def adjust_learning_rate(args,optimizer, epoch):
     """Sets the learning rate to the initial LR divided by 5 at 60th, 120th and 160th epochs"""
+    
+    args.epochs
+
     lr = args.lr * (
-        (0.2 ** int(epoch >= 60))
-        * (0.2 ** int(epoch >= 120))
-        * (0.2 ** int(epoch >= 160))
+        (0.2 ** int(epoch >= args.epochs - 140))
+        * (0.2 ** int(epoch >= args.epochs - 80))
+        * (0.2 ** int(epoch >= args.epochs - 40))
     )
+
+    ##lr = args.lr  ##DELETE ME!
 
     if args.tensorboard:
         log_value("learning_rate", lr, epoch)
