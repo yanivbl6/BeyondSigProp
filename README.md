@@ -3,7 +3,7 @@
 This is repository is intended to allow replication of the results presented in the paper:
 "Beyond Signal Propagation: Is Feature Diversity Necessary in Deep Neural Network Initialization?"
 
-Code is based on the repository: https://github.com/valilenk/fixup.git, and was temporarily moved to a seperate repository.
+Code is forked from the repository: https://github.com/valilenk/fixup.git
 
 # Requirements \ Replication details
 
@@ -39,8 +39,9 @@ python train.py --layers 16 --widen-factor 10 --batchnorm --droprate 0.01   --na
 
 ```
 
+During training, a tensorboard file is generated with the name specified, which includes the forward/backward correlations measured after each epoch.
 
-results, including correlations, can be seen via tensorboard:
+To view the results, use:
 
 `
 tensorboard --logdir runs
